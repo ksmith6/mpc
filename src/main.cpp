@@ -110,6 +110,25 @@ int main() {
             ptsy[i] = x_shifted * sinAng + y_shifted * cosAng;
           }
 
+          // Now, compute the crosstrack error (cte) and the heading error (epsi).
+          // To do this, we need to fit a cubic polynomial to the local points, 
+          // which need to be expressed as Eigen::VectorXd objects.
+
+          // Copy over the elements of the vector<double> objects into VectorXd objects.
+          Eigen::VectorXd x_glob_wp(ptsx.size());
+          Eigen::VectorXd y_glob_wp(ptsy.size());
+          for (int i=0; i<ptsx.size(); i++) {
+            x_glob_wp[i] = ptsx[i];
+            y_glob_wp[i] = ptsy[i];
+          }
+
+          // Fit the cubic polynomial to the points.
+          Eigen::VectorXd fit = polyfit(x_glob_wp, y_glob_wp, 3);
+
+          // Now, evaluate the cross track error (cte) relative to this fit cubic polynomial.
+          double cte = polyeval(fit, 0);
+          std::cout << "Crosstrack Error (CTE) = " << cte << " [m] " std::endl;
+
           /*
           * TODO: Calculate steeering angle and throttle using MPC.
           *
@@ -139,7 +158,6 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
-          std::cout << "ptsx = " << ptsx[0] << std::endl;
           msgJson["next_x"] = ptsx;
           msgJson["next_y"] = ptsy;
 
