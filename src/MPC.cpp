@@ -6,8 +6,8 @@
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
-size_t N = 0;
-double dt = 0;
+size_t N = 25;
+double dt = 0.05;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -21,6 +21,25 @@ double dt = 0;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
+
+double ref_cte = 0;
+double ref_epsi = 0;
+// NOTE: feel free to play around with this
+// or do something completely different
+double ref_v = 40;
+
+// The solver takes all the state variables and actuator
+// variables in a singular vector. Thus, we should to establish
+// when one variable starts and another ends to make our lifes easier.
+size_t x_start = 0;
+size_t y_start = x_start + N;
+size_t psi_start = y_start + N;
+size_t v_start = psi_start + N;
+size_t cte_start = v_start + N;
+size_t epsi_start = cte_start + N;
+size_t delta_start = epsi_start + N;
+size_t a_start = delta_start + N - 1;
+
 class FG_eval {
  public:
   // Fitted polynomial coefficients
@@ -33,6 +52,113 @@ class FG_eval {
     // fg a vector of constraints, x is a vector of constraints.
     // NOTE: You'll probably go back and forth between this function and
     // the Solver function below.
+    fg[0] = 0;
+
+    // Impose cost based on deviations of reference trajectory.
+    for (int i=0; i < N; i++) {
+
+      // Penalize cross track error 
+      fg[0] += CppAD::pow(vars[cte_start  + i] - ref_cte, 2);
+
+      // Penalize deviations from reference heading angle.
+      fg[0] += CppAD::pow(vars[epsi_start + i] - ref_epsi, 2);
+
+      // Penalize deviations from reference speed.
+      fg[0] += CppAD::pow(vars[v_start + i] - ref_v, 2);
+    }
+
+    // Penalize control energy expenditure
+    for (int i=0; i < N-1; i++) {
+
+      // Penalize non-zero steering angles 
+      fg[0] += CppAD::pow(vars[delta_start + i], 2);
+
+      // Penalize non-zero longitudinal acceleration commands (braking or acceleration)
+      fg[0] += 50* CppAD::pow(vars[a_start + i], 2);
+    }
+
+    // Penalize large changes in controller commands across time steps.
+    for (int i=0; i < N-2; i++) {
+      // Penalize changes in steering angle from one timestep to the next
+      fg[0] += 500 * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
+
+      // Penalize changes in the acceleration command from one timestep to the next.
+      fg[0] += 10 * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
+    }
+
+    // Reference State Cost
+    // TODO: Define the cost related the reference state and
+    // any anything you think may be beneficial.
+
+    //
+    // Setup Constraints
+    //
+    // NOTE: In this section you'll setup the model constraints.
+
+    // Initial constraints
+    //
+    // We add 1 to each of the starting indices due to cost being located at
+    // index 0 of `fg`.
+    // This bumps up the position of all the other values.
+    fg[1 + x_start] = vars[x_start];
+    fg[1 + y_start] = vars[y_start];
+    fg[1 + psi_start] = vars[psi_start];
+    fg[1 + v_start] = vars[v_start];
+    fg[1 + cte_start] = vars[cte_start];
+    fg[1 + epsi_start] = vars[epsi_start];
+
+    // The rest of the constraints
+    for (int i = 0; i < N - 1; i++) {
+
+      AD<double> x1 = vars[x_start + i + 1];
+      AD<double> y1 = vars[y_start + i + 1];
+      AD<double> psi1 = vars[psi_start + i + 1];
+      AD<double> v1 = vars[v_start + i + 1];
+      AD<double> cte1 = vars[cte_start + i + 1];
+      AD<double> epsi1 = vars[epsi_start + i + 1];
+
+      // The state at time t.
+      AD<double> x0 = vars[x_start + i];
+      AD<double> y0 = vars[y_start + i];
+      AD<double> psi0 = vars[psi_start + i];
+      AD<double> v0 = vars[v_start + i];
+      AD<double> cte0 = vars[cte_start + i];
+      AD<double> epsi0 = vars[epsi_start + i];
+
+      // Only consider the actuation at time t.
+      AD<double> delta0 = vars[delta_start + i];
+      AD<double> a0 = vars[a_start + i];
+
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0;
+      AD<double> psides0 = CppAD::atan(coeffs[1]);
+      //
+
+      // Here's `x` to get you started.
+      // The idea here is to constraint this value to be 0.
+      //
+      // NOTE: The use of `AD<double>` and use of `CppAD`!
+      // This is also CppAD can compute derivatives and pass
+      // these to the solver.
+      // Here's `x` to get you started.
+      // The idea here is to constraint this value to be 0.
+      //
+      // Recall the equations for the model:
+      // x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
+      // y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
+      // psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
+      // v_[t+1] = v[t] + a[t] * dt
+      // cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
+      // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
+      fg[2 + x_start + i] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+      fg[2 + y_start + i] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+      fg[2 + psi_start + i] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
+      fg[2 + v_start + i] = v1 - (v0 + a0 * dt);
+      fg[2 + cte_start + i] =
+          cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[2 + epsi_start + i] =
+          epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+    }
+
   }
 };
 
@@ -52,7 +178,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // element vector and there are 10 timesteps. The number of variables is:
   //
   // 4 * 10 + 2 * 9
-  size_t n_vars = 0;
+  size_t n_vars = N*4 + 2*(N-1);
   // TODO: Set the number of constraints
   size_t n_constraints = 0;
 

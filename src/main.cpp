@@ -85,12 +85,30 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
-          double px = j[1]["x"];
-          double py = j[1]["y"];
-          double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          vector<double> ptsx = j[1]["ptsx"]; // global x-position of waypoints
+          vector<double> ptsy = j[1]["ptsy"]; // global y-position of waypoints
+          double px = j[1]["x"];              // global x-position of vehicle
+          double py = j[1]["y"];              // global y-position of vehicle
+          double psi = j[1]["psi"];           // orientation of vehicle [radians]
+          double v = j[1]["speed"];           // speed of vehicle [mph]
+
+          // First, transform the global waypoints to vehicle coordinates
+          for (int i=0; i<ptsx.size(); i++) {
+            // Shift the waypoint coordinates to be centered about the current vehicle origin
+            double x_shifted = ptsx[i] - px;
+            double y_shifted = ptsy[i] - py;
+
+            // Then, rotate the variables into the current vehicle reference frame.
+            // Just overwrite the existing values
+            double angle = -psi;
+
+            // Cache results of expensive trig operations.
+            double cosAng = cos(angle);
+            double sinAng = sin(angle);
+
+            ptsx[i] = x_shifted * cosAng - y_shifted * sinAng;
+            ptsy[i] = x_shifted * sinAng + y_shifted * cosAng;
+          }
 
           /*
           * TODO: Calculate steeering angle and throttle using MPC.
@@ -98,8 +116,8 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+          double steer_value; // = 0;
+          double throttle_value; // = 1;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
@@ -116,14 +134,14 @@ int main() {
           msgJson["mpc_y"] = mpc_y_vals;
 
           //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
+          //vector<double> next_x_vals = ptsx;
+          //vector<double> next_y_vals = ptsy;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
-
-          msgJson["next_x"] = next_x_vals;
-          msgJson["next_y"] = next_y_vals;
+          std::cout << "ptsx = " << ptsx[0] << std::endl;
+          msgJson["next_x"] = ptsx;
+          msgJson["next_y"] = ptsy;
 
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
