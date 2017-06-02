@@ -26,7 +26,7 @@ double ref_cte = 0;
 double ref_epsi = 0;
 // NOTE: feel free to play around with this
 // or do something completely different
-double ref_v = 40;
+double ref_v = 100;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -129,8 +129,14 @@ class FG_eval {
       AD<double> delta0 = vars[delta_start + i];
       AD<double> a0 = vars[a_start + i];
 
-      AD<double> f0 = coeffs[0] + coeffs[1] * x0;
-      AD<double> psides0 = CppAD::atan(coeffs[1]);
+      // Since coeffs is a cubic polynomial (for the project), this 
+      // code needed to be changed to reflect the higher order. 
+      AD<double> x2 = x0 * x0;
+      AD<double> x3 = x2 * x0;
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x2+ coeffs[3] * x3;
+
+      // atan(Derivative of f0)
+      AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x2 + 3 * coeffs[3] * x2);
       //
 
       // Here's `x` to get you started.
@@ -178,9 +184,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // element vector and there are 10 timesteps. The number of variables is:
   //
   // 4 * 10 + 2 * 9
-  size_t n_vars = N*4 + 2*(N-1);
-  // TODO: Set the number of constraints
-  size_t n_constraints = 0;
+  size_t n_vars = N*6 + 2*(N-1);
+  size_t n_constraints = 6*N;
 
   // Initial value of the independent variables.
   // SHOULD BE 0 besides initial state.
@@ -189,9 +194,41 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     vars[i] = 0;
   }
 
+  // Initialize the first elements of vars with the initial state.
+  vars[x_start]   = state[0];
+  vars[y_start]   = state[1];
+  vars[psi_start] = state[2];
+  vars[v_start]   = state[3];
+  vars[cte_start] = state[4];
+  vars[epsi_start] = state[5];
+
+
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
-  // TODO: Set lower and upper limits for variables.
+  // Set lower and upper bounds for state variables.
+  double arbitarily_large_number = 1000000;
+  for (int i=0; i < delta_start; i++) {
+    vars_lowerbound[i] = -arbitarily_large_number;
+    vars_upperbound[i] = arbitarily_large_number;
+  }
+
+  // Set lower and upper bounds for control states.
+  double STEERING_BOUND = 25 * 3.14159/180; // 25 degrees converted to radians.
+  double ACCEL_BOUND = 1.0; // Unity max-value for throttle command.
+
+  // Set bounds for steering
+  for (int i=delta_start; i < a_start; i++) {
+    vars_lowerbound[i] = -STEERING_BOUND;
+    vars_upperbound[i] = STEERING_BOUND;
+  }
+
+  // Set bounds for acceleration
+  for (int i=a_start; i < n_vars; i++) {
+    vars_lowerbound[i] = -ACCEL_BOUND;
+    vars_upperbound[i] = ACCEL_BOUND;
+  }
+
+
 
   // Lower and upper limits for the constraints
   // Should be 0 besides initial state.
@@ -201,6 +238,22 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     constraints_lowerbound[i] = 0;
     constraints_upperbound[i] = 0;
   }
+
+  // Populate initial constraint states to fix the initial state by the optimizer.
+  // - Lower Bounds
+  constraints_lowerbound[x_start] = state[0];
+  constraints_lowerbound[y_start] = state[1];
+  constraints_lowerbound[psi_start] = state[2];
+  constraints_lowerbound[v_start] = state[3];
+  constraints_lowerbound[cte_start] = state[4];
+  constraints_lowerbound[epsi_start] = state[5];
+  // - Upper bounds.
+  constraints_upperbound[x_start] = state[0];
+  constraints_upperbound[y_start] = state[1];
+  constraints_upperbound[psi_start] = state[2];
+  constraints_upperbound[v_start] = state[3];
+  constraints_upperbound[cte_start] = state[4];
+  constraints_upperbound[epsi_start] = state[5];
 
   // object that computes objective and constraints
   FG_eval fg_eval(coeffs);
@@ -243,5 +296,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   //
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
-  return {};
+  double steering_cmd = -solution.x[delta_start];
+  double accel_cmd = solution.x[a_start];
+  return {steering_cmd, accel_cmd};
 }

@@ -127,7 +127,21 @@ int main() {
 
           // Now, evaluate the cross track error (cte) relative to this fit cubic polynomial.
           double cte = polyeval(fit, 0);
-          std::cout << "Crosstrack Error (CTE) = " << cte << " [m] " std::endl;
+          std::cout << "Crosstrack Error (CTE) = " << cte << " [m] " << std::endl;
+
+          double expected_psi = atan(fit[1]);
+          double epsi = psi - expected_psi;
+
+          // TODO - Compute the heading error.
+
+          // Compose the state to pass into the solver.
+          Eigen::VectorXd state(6); // State has 6 elements
+
+          // The first 3 elements (x,y,psi) are all zero because I've set 
+          // the reference frame to be centered about the vehicle.
+          state << 0.0, 0.0, 0.0, v, cte, epsi;
+          vector<double> solution = mpc.Solve(state, fit);
+
 
           /*
           * TODO: Calculate steeering angle and throttle using MPC.
@@ -135,8 +149,8 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          double steer_value; // = 0;
-          double throttle_value; // = 1;
+          double steer_value = solution[0]; // = 0;
+          double throttle_value = solution[1]; // = 1;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
@@ -149,8 +163,8 @@ int main() {
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
 
-          msgJson["mpc_x"] = mpc_x_vals;
-          msgJson["mpc_y"] = mpc_y_vals;
+          msgJson["mpc_x"] = {0.0,10.0};
+          msgJson["mpc_y"] = {0.0,0.0};
 
           //Display the waypoints/reference line
           //vector<double> next_x_vals = ptsx;
