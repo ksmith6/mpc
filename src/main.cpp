@@ -91,6 +91,8 @@ int main() {
           double py = j[1]["y"];              // global y-position of vehicle
           double psi = j[1]["psi"];           // orientation of vehicle [radians]
           double v = j[1]["speed"];           // speed of vehicle [mph]
+          double throttle = j[1]["throttle"];
+          double steering_angle = j[1]["steering_angle"];
 
           // First, transform the global waypoints to vehicle coordinates
           for (int i=0; i<ptsx.size(); i++) {
@@ -122,6 +124,13 @@ int main() {
             y_glob_wp[i] = ptsy[i];
           }
 
+          /** NOTE TO REVIEWER: Polynomial Fitting and MPC Preprocessing
+
+          Here is where the polynomial is fit to the waypoints.  The 
+          waypoints have been transformed from global coordinates into 
+          a vehicle-centered reference frame.
+        
+          */
           // Fit the cubic polynomial to the points.
           Eigen::VectorXd fit = polyfit(x_glob_wp, y_glob_wp, 3);
 
@@ -129,49 +138,66 @@ int main() {
           double cte = polyeval(fit, 0);
           std::cout << "Crosstrack Error (CTE) = " << cte << " [m] " << std::endl;
 
-          double expected_psi = atan(fit[1]);
-          double epsi = psi - expected_psi;
+          double epsi = psi - atan(fit[1]);
+          
+          
+          /* NOTE TO REVIEWER: Model Predictve Control with Latency
 
-          // TODO - Compute the heading error.
+            To account for latency, the state is predicted forward by the 
+            latency delay (100 ms) so the solver outputs a command that is
+            time-synched with time of actuation by the effectors.
 
+            Note the prediction kinematics have been slighly modified (simplified) 
+            to account for the fact that initial states (x,y,psi) are defined to
+             be zero post-alignment with the vehicle-centered reference frame.
+
+          */
+          double latency_dt = 0.1; // 100 ms
+          double Lf = 2.67;
+
+
+          double latency_x = v * latency_dt;
+          double latency_y = 0;
+          double latency_psi = -(v / Lf) * steering_angle * latency_dt;
+          double latency_v = v + throttle * latency_dt;
+          double latency_cte = cte + v * sin(epsi) * latency_dt;
+
+          // Compute the expected heading based on fit.
+          double expected_psi = atan(fit[1] + 
+                                2.0 * fit[2] * latency_x + 
+                                3.0 * fit[3] * latency_x*latency_x);
+
+          // Compute the latent heading error.
+          double latency_epsi = psi - expected_psi;
+          
           // Compose the state to pass into the solver.
           Eigen::VectorXd state(6); // State has 6 elements
-
-          // The first 3 elements (x,y,psi) are all zero because I've set 
-          // the reference frame to be centered about the vehicle.
-          state << 0.0, 0.0, 0.0, v, cte, epsi;
-          vector<double> solution = mpc.Solve(state, fit);
-
+          state << latency_x, latency_y, latency_psi, latency_v, latency_cte, latency_epsi;
 
           /*
-          * TODO: Calculate steeering angle and throttle using MPC.
+          * Calculate steeering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
           */
-          double steer_value = solution[0]; // = 0;
-          double throttle_value = solution[1]; // = 1;
 
+          // Solve for the steering angle and acceleration solution.
+          vector<double> solution = mpc.Solve(state, fit);
+
+          // Assign the solution outputs to clarifying variable names.
+          double steer_value = solution[0];
+          double throttle_value = solution[1];
+
+          // Package the JSON payload for transmission to the simulator.
           json msgJson;
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-
-          msgJson["mpc_x"] = {0.0,10.0};
-          msgJson["mpc_y"] = {0.0,0.0};
+          msgJson["mpc_x"] = mpc.traj_x;
+          msgJson["mpc_y"] = mpc.traj_y;
 
           //Display the waypoints/reference line
-          //vector<double> next_x_vals = ptsx;
-          //vector<double> next_y_vals = ptsy;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
           msgJson["next_x"] = ptsx;
           msgJson["next_y"] = ptsy;
 

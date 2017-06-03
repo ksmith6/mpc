@@ -5,9 +5,53 @@
 
 using CppAD::AD;
 
-// TODO: Set the timestep length and duration
-size_t N = 25;
-double dt = 0.05;
+/**
+  NOTE TO REVIEWER: THE MODEL
+  
+  My state was composed of the x-position, y-position, heading angle, speed, crosstrack error, and heading error.
+
+  The actuators modeled were steering angle and acceleration.
+
+  Here is the kinematic model used:
+
+  x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
+  y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
+  psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
+  v_[t+1] = v[t] + a[t] * dt
+  cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
+  epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
+
+
+  From my manual tuning process, it seemed that it was far more 
+  important to penalize heading errors as opposed to crosstrack errors to obtain
+  satisfactory driving behavior.  This corresponds well to the PID control project
+  where the derivative error term was far more important than the proportional 
+  crosstrack error term.
+
+  Additionally, to avoid large variations in steering, it was important to heavily 
+  penalize large changes in steering angle from timestep to timestep.
+
+*/
+
+
+
+
+// Set the timestep length and duration
+size_t N = 10;
+double dt = 0.1;
+/**
+  NOTE TO REVIEWER: TIMESTEP LENGTH AND ELAPSED DURATION
+
+  I tried various other combinations of N and dt.  If I predicted longer trajectories, 
+  the prediction would extend beyond the set of waypoints, and thus it was pointless
+  to predict more than about a second or so into the future.  Having 10 timesteps 
+  seemed to provide enough model to give enough degrees of freedom to drive the 
+  trajectory back toward the centerline.
+
+  Decreasing dt resulted in the solver occasionally failing to converge due to the increased 
+  dimensionality of the optimization routine.  For this reason, I select dt=0.1 seconds.
+*/
+
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -26,7 +70,7 @@ double ref_cte = 0;
 double ref_epsi = 0;
 // NOTE: feel free to play around with this
 // or do something completely different
-double ref_v = 100;
+double ref_v = 50;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -58,10 +102,10 @@ class FG_eval {
     for (int i=0; i < N; i++) {
 
       // Penalize cross track error 
-      fg[0] += CppAD::pow(vars[cte_start  + i] - ref_cte, 2);
+      fg[0] += 500 * CppAD::pow(vars[cte_start  + i] - ref_cte, 2);
 
       // Penalize deviations from reference heading angle.
-      fg[0] += CppAD::pow(vars[epsi_start + i] - ref_epsi, 2);
+      fg[0] += 6000 * CppAD::pow(vars[epsi_start + i] - ref_epsi, 2);
 
       // Penalize deviations from reference speed.
       fg[0] += CppAD::pow(vars[v_start + i] - ref_v, 2);
@@ -71,19 +115,19 @@ class FG_eval {
     for (int i=0; i < N-1; i++) {
 
       // Penalize non-zero steering angles 
-      fg[0] += CppAD::pow(vars[delta_start + i], 2);
+      fg[0] += 15000 * CppAD::pow(vars[delta_start + i], 2);
 
       // Penalize non-zero longitudinal acceleration commands (braking or acceleration)
-      fg[0] += 50* CppAD::pow(vars[a_start + i], 2);
+      fg[0] += 10* CppAD::pow(vars[a_start + i], 2);
     }
 
     // Penalize large changes in controller commands across time steps.
     for (int i=0; i < N-2; i++) {
       // Penalize changes in steering angle from one timestep to the next
-      fg[0] += 500 * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
+      fg[0] += 5000 * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
 
       // Penalize changes in the acceleration command from one timestep to the next.
-      fg[0] += 10 * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
+      fg[0] += 10000 * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
     }
 
     // Reference State Cost
@@ -136,7 +180,7 @@ class FG_eval {
       AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x2+ coeffs[3] * x3;
 
       // atan(Derivative of f0)
-      AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x2 + 3 * coeffs[3] * x2);
+      AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0 + 3 * coeffs[3] * x2);
       //
 
       // Here's `x` to get you started.
@@ -179,11 +223,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
-  // TODO: Set the number of model variables (includes both states and inputs).
-  // For example: If the state is a 4 element vector, the actuators is a 2
-  // element vector and there are 10 timesteps. The number of variables is:
-  //
-  // 4 * 10 + 2 * 9
   size_t n_vars = N*6 + 2*(N-1);
   size_t n_constraints = 6*N;
 
@@ -290,6 +329,16 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Cost
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
+
+  // Load solution trajectory into traj_x and traj_y for visualization.
+  traj_x.clear();
+  traj_y.clear();
+  for (int i=0; i<N-1; i++) {
+    double x = solution.x[x_start + i + 1];
+    double y = solution.x[y_start + i + 1];
+    traj_x.push_back(x);
+    traj_y.push_back(y);
+  }
 
   // TODO: Return the first actuator values. The variables can be accessed with
   // `solution.x[i]`.
